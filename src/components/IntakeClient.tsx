@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { apiGet, apiSend } from "@/lib/api-client";
 import { resolveApprover } from "@/lib/approvals";
 import { applyNamePattern, applyUtmPattern } from "@/lib/naming";
@@ -33,6 +33,8 @@ export function IntakeClient() {
   const [checked, setChecked] = useState(false);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const requestKeyRef = useRef(crypto.randomUUID());
+  const inFlightRef = useRef(false);
 
   useEffect(() => {
     apiGet<Bootstrap>("/api/bootstrap").then(setBootstrap).catch((err: Error) => {
@@ -60,8 +62,10 @@ export function IntakeClient() {
     };
   }, [bootstrap, shortName, region, type, launchDate, budgetUsd]);
 
-  async function createDraft() {
+  async function persistDraft() {
     const result = await apiSend<{ campaign: { id: string } }>("/api/campaigns", "POST", {
+      id: pendingId,
+      idempotencyKey: requestKeyRef.current,
       shortName,
       type,
       region,
@@ -70,6 +74,7 @@ export function IntakeClient() {
       venue,
       brief,
     });
+    setPendingId(result.campaign.id);
     return result.campaign.id;
   }
 
@@ -77,33 +82,38 @@ export function IntakeClient() {
     return apiSend<{ message: string; asanaProjectCreated: boolean; campaign: { id: string; status: string } }>(
       `/api/campaigns/${id}/submit`,
       "POST",
-      { confirm, idempotencyKey: id },
+      { confirm, idempotencyKey: requestKeyRef.current },
     );
   }
 
-  async function onSaveDraft() {
+  async function runExclusive(work: () => Promise<void>) {
+    if (inFlightRef.current) return;
+    inFlightRef.current = true;
     setErrors({});
     setMessage(null);
     setBusy(true);
     try {
-      await createDraft();
-      setMessage("Draft saved locally. It has not been submitted and no Asana project was created.");
+      await work();
     } catch (err) {
       const e = err as Error & { errors?: Record<string, string> };
       setErrors(e.errors ?? {});
       setMessage(e.message);
     } finally {
+      inFlightRef.current = false;
       setBusy(false);
     }
   }
 
+  async function onSaveDraft() {
+    await runExclusive(async () => {
+      await persistDraft();
+      setMessage("Draft saved locally. It has not been submitted and no Asana project was created.");
+    });
+  }
+
   async function onSubmitRequest() {
-    setErrors({});
-    setMessage(null);
-    setBusy(true);
-    try {
-      const id = pendingId || (await createDraft());
-      setPendingId(id);
+    await runExclusive(async () => {
+      const id = await persistDraft();
       if (preview?.approval.needed) {
         const result = await submit(id, false);
         setMessage(result.message);
@@ -112,13 +122,7 @@ export function IntakeClient() {
         return;
       }
       setConfirmOpen(true);
-    } catch (err) {
-      const e = err as Error & { errors?: Record<string, string> };
-      setErrors(e.errors ?? {});
-      setMessage(e.message);
-    } finally {
-      setBusy(false);
-    }
+    });
   }
 
   async function onConfirm() {
@@ -254,6 +258,9 @@ export function IntakeClient() {
           {fieldError("brief")}
         </label>
 
+        {pendingId ? (
+          <p className="mt-4 text-xs text-gray-500">Editing the saved draft. Further saves and submit keep the same request.</p>
+        ) : null}
         {message ? (
           <p className="mt-4 rounded-xl bg-gray-50 px-4 py-3 text-sm text-gray-800" role="status">
             {message}

@@ -110,4 +110,14 @@ describe("findDuplicateCampaign", () => {
       }),
     ).toBeNull();
   });
+
+  it("ignores the campaign being submitted so a saved draft can be sent", () => {
+    expect(
+      findDuplicateCampaign(existing, {
+        normalizedName: "fy27-na-event-fall-summit",
+        launchDate: "2027-02-18",
+        ignoreId: "c1",
+      }),
+    ).toBeNull();
+  });
 });

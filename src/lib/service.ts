@@ -9,12 +9,12 @@ import { ASANA_SCOPES, asanaRedirectUri, inspectEnv, resolveAppMode } from "./co
 import { decryptSecret, encryptSecret, randomUrlSafe } from "./crypto";
 import { defaultSettings, type OrgSettings } from "./defaults";
 import { DEFAULT_ORG_ID, ensureDefaultOrg, getDb, newId, nowIso } from "./db";
+import { localSetupStatus } from "./dashboard-metrics";
 import { demoAsanaResult, findDuplicateCampaign, canWriteToAsana } from "./guards";
 import { getTokenKey } from "./keys";
 import { applyNamePattern, applyUtmPattern, normalizeCampaignName } from "./naming";
 import { tasksForLaunch } from "./templates";
 import type {
-  CampaignStatus,
   CampaignType,
   DuplicateCandidate,
   TaskCheckInStatus,
@@ -391,6 +391,100 @@ function insertTasks(orgId: string, campaignId: string, input: ValidatedCampaign
   }
 }
 
+function optionalText(raw: unknown, key: string): string | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const value = (raw as Record<string, unknown>)[key];
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed || undefined;
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  const code =
+    error && typeof error === "object" && "code" in error
+      ? String((error as { code: unknown }).code)
+      : "";
+  const message = error instanceof Error ? error.message : String(error);
+  return /UNIQUE|CONSTRAINT/i.test(`${code} ${message}`);
+}
+
+function findCampaignIdByIdempotencyKey(orgId: string, key: string): string | undefined {
+  const row = getDb()
+    .prepare("SELECT id FROM campaigns WHERE org_id = ? AND idempotency_key = ?")
+    .get(orgId, key) as { id: string } | undefined;
+  return row?.id;
+}
+
+function draftComputedFields(value: ValidatedCampaignInput, orgId: string) {
+  const settings = getSettings(orgId);
+  const input = {
+    launchDate: new Date(`${value.launchDate}T00:00:00Z`),
+    region: value.region,
+    type: value.type,
+    shortName: value.shortName,
+  };
+  const fullName = applyNamePattern(settings.namePattern, input, settings.maxNameLength);
+  return {
+    settings,
+    fullName,
+    normalizedName: normalizeCampaignName(fullName),
+    utm: applyUtmPattern(settings.utmPattern, input),
+    decision: resolveApprover(settings.approvalRules, value),
+  };
+}
+
+function updateDraftRow(input: {
+  id: string;
+  orgId: string;
+  value: ValidatedCampaignInput;
+  idempotencyKey?: string;
+}) {
+  const existing = getCampaign(input.id, input.orgId);
+  if (!existing) throw Object.assign(new Error("Campaign not found."), { status: 404 });
+  if (existing.status !== "draft") {
+    throw Object.assign(new Error("A submitted request cannot be saved as a new draft."), {
+      status: 409,
+    });
+  }
+  const computed = draftComputedFields(input.value, input.orgId);
+  const ts = nowIso();
+  getDb()
+    .prepare(
+      `UPDATE campaigns SET
+         short_name = ?, full_name = ?, normalized_name = ?, type = ?, region = ?,
+         launch_date = ?, budget_usd = ?, venue = ?, brief = ?, utm = ?, approver_role = ?,
+         idempotency_key = COALESCE(?, idempotency_key), updated_at = ?
+       WHERE id = ? AND org_id = ? AND status = 'draft'`,
+    )
+    .run(
+      input.value.shortName,
+      computed.fullName,
+      computed.normalizedName,
+      input.value.type,
+      input.value.region,
+      input.value.launchDate,
+      input.value.budgetUsd,
+      input.value.venue,
+      input.value.brief,
+      computed.utm,
+      computed.decision.approverRole,
+      input.idempotencyKey ?? null,
+      ts,
+      input.id,
+      input.orgId,
+    );
+  const typeOrDateChanged =
+    existing.type !== input.value.type || existing.launchDate !== input.value.launchDate;
+  if (typeOrDateChanged) {
+    getDb().prepare("DELETE FROM campaign_tasks WHERE campaign_id = ? AND org_id = ?").run(
+      input.id,
+      input.orgId,
+    );
+    insertTasks(input.orgId, input.id, input.value, computed.settings);
+  }
+  return getCampaign(input.id, input.orgId);
+}
+
 export function saveDraft(raw: unknown, orgId = DEFAULT_ORG_ID) {
   const parsed = validateCampaignInput(raw as Parameters<typeof validateCampaignInput>[0]);
   if (!parsed.ok) {
@@ -400,49 +494,57 @@ export function saveDraft(raw: unknown, orgId = DEFAULT_ORG_ID) {
     });
   }
   ensureDefaultOrg();
-  const settings = getSettings(orgId);
   const value = parsed.value;
-  const fullName = applyNamePattern(settings.namePattern, {
-    launchDate: new Date(`${value.launchDate}T00:00:00Z`),
-    region: value.region,
-    type: value.type,
-    shortName: value.shortName,
-  }, settings.maxNameLength);
-  const normalizedName = normalizeCampaignName(fullName);
-  const utm = applyUtmPattern(settings.utmPattern, {
-    launchDate: new Date(`${value.launchDate}T00:00:00Z`),
-    region: value.region,
-    type: value.type,
-    shortName: value.shortName,
-  });
-  const decision = resolveApprover(settings.approvalRules, value);
+  const requestedId = optionalText(raw, "id");
+  const idempotencyKey = optionalText(raw, "idempotencyKey");
+  const keyMatch = idempotencyKey ? findCampaignIdByIdempotencyKey(orgId, idempotencyKey) : undefined;
+  const existingId = requestedId ?? keyMatch;
+  if (requestedId && keyMatch && requestedId !== keyMatch) {
+    throw Object.assign(new Error("This request was already processed."), { status: 409 });
+  }
+  if (existingId) {
+    return updateDraftRow({ id: existingId, orgId, value, idempotencyKey });
+  }
+
+  const computed = draftComputedFields(value, orgId);
   const id = newId("camp");
   const ts = nowIso();
-  getDb()
-    .prepare(
-      `INSERT INTO campaigns (
-         id, org_id, short_name, full_name, normalized_name, type, region, launch_date,
-         budget_usd, venue, brief, utm, status, approver_role, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)`,
-    )
-    .run(
-      id,
-      orgId,
-      value.shortName,
-      fullName,
-      normalizedName,
-      value.type,
-      value.region,
-      value.launchDate,
-      value.budgetUsd,
-      value.venue,
-      value.brief,
-      utm,
-      decision.approverRole,
-      ts,
-      ts,
-    );
-  insertTasks(orgId, id, value, settings);
+  try {
+    getDb()
+      .prepare(
+        `INSERT INTO campaigns (
+           id, org_id, short_name, full_name, normalized_name, type, region, launch_date,
+           budget_usd, venue, brief, utm, status, approver_role, idempotency_key, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?)`,
+      )
+      .run(
+        id,
+        orgId,
+        value.shortName,
+        computed.fullName,
+        computed.normalizedName,
+        value.type,
+        value.region,
+        value.launchDate,
+        value.budgetUsd,
+        value.venue,
+        value.brief,
+        computed.utm,
+        computed.decision.approverRole,
+        idempotencyKey ?? null,
+        ts,
+        ts,
+      );
+  } catch (error) {
+    if (idempotencyKey && isUniqueViolation(error)) {
+      const racedId = findCampaignIdByIdempotencyKey(orgId, idempotencyKey);
+      if (racedId) {
+        return updateDraftRow({ id: racedId, orgId, value, idempotencyKey });
+      }
+    }
+    throw error;
+  }
+  insertTasks(orgId, id, value, computed.settings);
   return getCampaign(id, orgId);
 }
 
@@ -476,6 +578,24 @@ export async function submitCampaign(input: {
       new Error("A campaign with this name and launch date already exists."),
       { status: 409, duplicateId: duplicate.id },
     );
+  }
+
+  if (campaign.status !== "draft") {
+    if (campaign.status === "awaiting_approval") {
+      return {
+        campaign,
+        asanaProjectCreated: false,
+        message: `Sent for in-app approval to the ${campaign.approverRole}. No Asana project has been created yet.`,
+      };
+    }
+    return {
+      campaign,
+      asanaProjectCreated: Boolean(campaign.asanaProjectGid),
+      asanaProjectGid: campaign.asanaProjectGid ?? null,
+      message: campaign.asanaProjectGid
+        ? "This request was already processed."
+        : demoAsanaResult().message,
+    };
   }
 
   if (input.idempotencyKey) {
@@ -555,7 +675,7 @@ async function provisionCampaign(input: { id: string; confirm: boolean; orgId: s
   if (mode !== "real") {
     getDb()
       .prepare(
-        "UPDATE campaigns SET status = 'live', submitted_at = COALESCE(submitted_at, ?), updated_at = ? WHERE id = ? AND org_id = ?",
+        "UPDATE campaigns SET status = 'approved', submitted_at = COALESCE(submitted_at, ?), updated_at = ? WHERE id = ? AND org_id = ?",
       )
       .run(nowIso(), nowIso(), input.id, input.orgId);
     return {
@@ -665,10 +785,16 @@ function deriveLocalStatus(id: string, orgId: string) {
       task.checkInStatus === "delayed" ||
       (!task.completed && String(task.dueDate) < today && task.checkInStatus !== "done"),
   );
-  let status: CampaignStatus = "live";
-  if (allDone) status = "launched";
-  else if (blocked) status = "blocked";
-  else if (delayed) status = "delayed";
+  const hasProgress = tasks.some(
+    (task) => Boolean(task.completed) || String(task.checkInStatus) !== "pending",
+  );
+  const status = localSetupStatus({
+    allDone,
+    blocked,
+    delayed,
+    asanaProjectCreated: Boolean(campaign.asanaProjectCreated),
+    hasProgress,
+  });
   getDb()
     .prepare("UPDATE campaigns SET status = ?, updated_at = ? WHERE id = ? AND org_id = ?")
     .run(status, nowIso(), id, orgId);

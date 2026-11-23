@@ -4,6 +4,12 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { apiGet, apiSend } from "@/lib/api-client";
 import type { AppMode } from "@/lib/types";
+import {
+  approvedOrInProgressCount,
+  approvedOrInProgressLabel,
+  checkInAnsweredMetrics,
+  displayCampaignStatus,
+} from "@/lib/dashboard-metrics";
 import { ConfirmDialog } from "./ConfirmDialog";
 
 type Task = {
@@ -100,16 +106,13 @@ export function DashboardClient() {
       .map((task) => ({ campaign, task })),
   );
 
+  const checkins = checkInAnsweredMetrics(campaigns);
   const counts = {
-    live: campaigns.filter((c) => ["live", "setting_up", "approved"].includes(c.status)).length,
+    inProgress: approvedOrInProgressCount(campaigns),
     awaiting: campaigns.filter((c) => c.status === "awaiting_approval").length,
     late: campaigns.filter((c) => ["delayed", "blocked"].includes(c.status)).length,
-    checkins: {
-      answered: campaigns
-        .flatMap((c) => c.tasks)
-        .filter((t) => ["done", "delayed", "blocked"].includes(t.checkInStatus)).length,
-      total: campaigns.flatMap((c) => c.tasks).length,
-    },
+    checkins,
+    inProgressLabel: approvedOrInProgressLabel(campaigns),
   };
 
   async function refreshAll() {
@@ -160,13 +163,17 @@ export function DashboardClient() {
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {[
-          ["Live or in setup", counts.live],
-          ["Awaiting approval", counts.awaiting],
-          ["Late or blocked", counts.late],
-          ["Check-ins answered", `${counts.checkins.answered} of ${counts.checkins.total}`],
-        ].map(([labelText, value], index) => (
+          ["Approved or in progress", counts.inProgress, counts.inProgressLabel],
+          ["Awaiting approval", counts.awaiting, "Awaiting approval"],
+          ["Late or blocked", counts.late, "Late or blocked"],
+          [
+            "Check-ins answered",
+            `${counts.checkins.answered} of ${counts.checkins.requested}`,
+            "Check-ins answered",
+          ],
+        ].map(([fallbackLabel, value, labelText], index) => (
           <article
-            key={labelText}
+            key={String(fallbackLabel)}
             className={`rounded-2xl border bg-white p-4 shadow-sm ${
               index === 2 && counts.late ? "border-red-200" : "border-gray-200"
             }`}
@@ -175,6 +182,9 @@ export function DashboardClient() {
             <p className={`mt-2 text-3xl font-semibold ${index === 2 && counts.late ? "text-red-700" : ""}`}>
               {value}
             </p>
+            {index === 3 ? (
+              <p className="mt-1 text-xs text-gray-500">Of check-ins sent or replied, excluding drafts</p>
+            ) : null}
           </article>
         ))}
       </div>
@@ -227,9 +237,14 @@ export function DashboardClient() {
                         {done} of {campaign.tasks.length}
                       </td>
                       <td className="py-3">
-                        <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${STATUS_CLASS[campaign.status] || "bg-gray-100"}`}>
-                          {label(campaign.status)}
-                        </span>
+                        {(() => {
+                          const shown = displayCampaignStatus(campaign);
+                          return (
+                            <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${STATUS_CLASS[shown.key] || STATUS_CLASS[campaign.status] || "bg-gray-100"}`}>
+                              {shown.label}
+                            </span>
+                          );
+                        })()}
                       </td>
                       <td className="py-3 text-right">
                         {campaign.status === "awaiting_approval" ? (

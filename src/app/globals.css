@@ -29,22 +29,57 @@ body {
   font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
 }
 
-a {
-  color: inherit;
+/* Resets stay in the base layer so utility and button classes can override color. */
+@layer base {
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  *:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+    color: inherit;
+  }
+}
+
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.5rem;
+  background-color: var(--primary);
+  color: #fff;
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.25rem;
   text-decoration: none;
 }
 
-*:focus-visible {
-  outline: 2px solid var(--primary);
-  outline-offset: 2px;
+.btn-primary:hover,
+.btn-primary:focus,
+.btn-primary:focus-visible,
+.btn-primary:active,
+.btn-primary:disabled,
+.btn-primary[aria-disabled="true"] {
+  color: #fff;
 }
 
-button,
-input,
-select,
-textarea {
-  font: inherit;
-  color: inherit;
+.btn-primary:hover:not(:disabled):not([aria-disabled="true"]) {
+  background-color: var(--primary-hover);
+}
+
+.btn-primary:disabled,
+.btn-primary[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 input[type="text"],

@@ -63,9 +63,11 @@ export function ConfirmDialog({
           <button
             type="submit"
             disabled={disabled}
-            className={`rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 ${
-              danger ? "bg-red-600 hover:bg-red-700" : "bg-primary hover:bg-[var(--primary-hover)]"
-            }`}
+            className={
+              danger
+                ? "rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 hover:text-white focus:text-white disabled:cursor-not-allowed disabled:opacity-50 disabled:text-white"
+                : "btn-primary px-4 py-2"
+            }
           >
             {confirmLabel}
           </button>

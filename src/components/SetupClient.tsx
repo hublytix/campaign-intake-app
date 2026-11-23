@@ -145,7 +145,7 @@ export function SetupClient() {
               <div className="mt-4 flex flex-wrap gap-2">
                 {asanaReady ? (
                   <a
-                    className="inline-flex rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-white hover:bg-[var(--primary-hover)]"
+                    className="btn-primary px-3 py-2"
                     href="/api/asana/oauth/start?returnPath=/setup"
                   >
                     {data.connection.connected ? "Reconnect Asana" : "Connect Asana"}
@@ -383,7 +383,7 @@ export function SetupClient() {
           <button
             type="button"
             onClick={save}
-            className="rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-white hover:bg-[var(--primary-hover)]"
+            className="btn-primary px-4 py-2.5"
           >
             {saved ? "Saved" : "Save setup"}
           </button>

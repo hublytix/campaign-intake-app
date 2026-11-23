@@ -148,7 +148,7 @@ export function DashboardClient() {
           </button>
           <Link
             href="/intake"
-            className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--primary-hover)]"
+            className="btn-primary px-4 py-2"
           >
             New request
           </Link>

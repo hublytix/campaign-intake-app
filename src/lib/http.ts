@@ -1,4 +1,5 @@
 import { inspectEnv } from "./config";
+import { isTrustedRequestOrigin } from "./origin";
 
 export function json(data: unknown, status = 200): Response {
   return Response.json(data, { status });
@@ -8,17 +9,25 @@ export function errorJson(message: string, status = 400, extra?: Record<string, 
   return Response.json({ error: message, ...extra }, { status });
 }
 
-export function assertSameOrigin(request: Request): void {
-  const { appBaseUrl } = inspectEnv();
+export function assertSameOrigin(
+  request: Request,
+  env: Record<string, string | undefined> = process.env,
+): void {
   const origin = request.headers.get("origin");
-  const allowed = new URL(appBaseUrl).origin;
+  const method = request.method.toUpperCase();
   if (!origin) {
     // same-origin navigations may omit Origin; require it for mutating fetch
-    const method = request.method.toUpperCase();
     if (method === "GET" || method === "HEAD") return;
     throw Object.assign(new Error("Origin header required."), { status: 403 });
   }
-  if (origin !== allowed) {
+  const { appBaseUrl } = inspectEnv(env);
+  if (
+    !isTrustedRequestOrigin({
+      originHeader: origin,
+      requestUrl: request.url,
+      appBaseUrl,
+    })
+  ) {
     throw Object.assign(new Error("Cross-origin request blocked."), { status: 403 });
   }
 }

@@ -1,10 +1,12 @@
 import { resolveApprover } from "./approvals";
 import {
+  AsanaApiError,
   AsanaClient,
   exchangeCodeForTokens,
   refreshAccessToken,
   revokeAsanaToken,
 } from "./asana";
+import { buildCheckInHtml, findCheckInReply } from "./checkins";
 import { ASANA_SCOPES, asanaRedirectUri, inspectEnv, resolveAppMode } from "./config";
 import { decryptSecret, encryptSecret, randomUrlSafe } from "./crypto";
 import { defaultSettings, type OrgSettings } from "./defaults";
@@ -348,6 +350,8 @@ function mapCampaign(row: Record<string, unknown>, tasks: Record<string, unknown
       checkInStatus: task.check_in_status,
       checkInNote: task.check_in_note,
       checkInSentAt: task.check_in_sent_at,
+      checkInStoryGid: task.check_in_story_gid ?? null,
+      checkInReplyGid: task.check_in_reply_gid ?? null,
     })),
     asanaProjectCreated: Boolean(row.asana_project_gid),
   };
@@ -775,6 +779,7 @@ export async function refreshCampaignStatus(id: string, orgId = DEFAULT_ORG_ID) 
         String(local.id),
       );
   }
+  await applyAsanaCheckInReplies(client, id, orgId);
   return deriveLocalStatus(id, orgId);
 }
 
@@ -830,12 +835,94 @@ export function recordCheckIn(input: {
   return deriveLocalStatus(input.campaignId, orgId);
 }
 
-export function sendCheckIn(input: { campaignId: string; taskId: string; orgId?: string }) {
+export async function sendCheckIn(input: { campaignId: string; taskId: string; orgId?: string }) {
   const orgId = input.orgId ?? DEFAULT_ORG_ID;
-  getDb()
-    .prepare("UPDATE campaign_tasks SET check_in_sent_at = ?, check_in_status = CASE WHEN check_in_status = 'pending' THEN 'no_reply' ELSE check_in_status END WHERE id = ? AND org_id = ?")
-    .run(nowIso(), input.taskId, orgId);
-  return getCampaign(input.campaignId, orgId);
+  const campaign = getCampaign(input.campaignId, orgId);
+  if (!campaign) throw Object.assign(new Error("Campaign not found."), { status: 404 });
+  const task = campaign.tasks.find((item) => item.id === input.taskId);
+  if (!task) throw Object.assign(new Error("Task not found."), { status: 404 });
+  if (task.completed || task.checkInStatus === "done") {
+    throw Object.assign(new Error("This task is already done."), { status: 409 });
+  }
+
+  const markSent = (storyGid: string | null) =>
+    getDb()
+      .prepare(
+        "UPDATE campaign_tasks SET check_in_sent_at = ?, check_in_story_gid = ?, check_in_status = CASE WHEN check_in_status = 'pending' THEN 'no_reply' ELSE check_in_status END WHERE id = ? AND org_id = ?",
+      )
+      .run(nowIso(), storyGid, input.taskId, orgId);
+
+  if (resolveAppMode() !== "real") {
+    markSent(null);
+    return {
+      campaign: getCampaign(input.campaignId, orgId),
+      sentToAsana: false,
+      message: "Demo mode: the check-in was recorded here only. Nothing was sent to Asana.",
+    };
+  }
+  if (!task.asanaTaskGid) {
+    throw Object.assign(
+      new Error("This task isn't in Asana yet. Create the Asana project before sending check-ins."),
+      { status: 409 },
+    );
+  }
+  if (!task.ownerGid) {
+    throw Object.assign(
+      new Error("Assign an owner to this task first, so the check-in reaches someone."),
+      { status: 409 },
+    );
+  }
+
+  const client = await liveClient(orgId);
+  let story: { gid: string };
+  try {
+    story = await client.addTaskComment(
+      String(task.asanaTaskGid),
+      buildCheckInHtml({
+        ownerGid: String(task.ownerGid),
+        taskName: String(task.name),
+        dueDate: String(task.dueDate),
+        campaignName: String(campaign.fullName),
+      }),
+    );
+  } catch (error) {
+    if (error instanceof AsanaApiError && error.status === 403) {
+      throw Object.assign(
+        new Error(
+          "Asana didn't allow posting the comment. Disconnect and reconnect Asana in Setup so the app gets permission to comment on tasks.",
+        ),
+        { status: 409 },
+      );
+    }
+    throw error;
+  }
+  markSent(story.gid);
+  return {
+    campaign: getCampaign(input.campaignId, orgId),
+    sentToAsana: true,
+    message: `Check-in posted on the Asana task. ${task.ownerName ?? "The owner"} was mentioned and will be notified.`,
+  };
+}
+
+/** Applies replies to check-ins that were posted as comments on Asana tasks. */
+async function applyAsanaCheckInReplies(client: AsanaClient, campaignId: string, orgId: string) {
+  const campaign = getCampaign(campaignId, orgId);
+  if (!campaign) return;
+  for (const task of campaign.tasks) {
+    if (!task.asanaTaskGid || !task.checkInSentAt || !task.checkInStoryGid) continue;
+    if (task.completed || task.checkInStatus === "done") continue;
+    const stories = await client.listTaskComments(String(task.asanaTaskGid));
+    const reply = findCheckInReply(stories, {
+      sentAt: String(task.checkInSentAt),
+      checkInStoryGid: String(task.checkInStoryGid),
+    });
+    if (!reply || reply.storyGid === task.checkInReplyGid) continue;
+    getDb()
+      .prepare(
+        "UPDATE campaign_tasks SET check_in_status = ?, check_in_note = ?, check_in_reply_gid = ?, completed = CASE WHEN ? = 'done' THEN 1 ELSE completed END WHERE id = ? AND org_id = ?",
+      )
+      .run(reply.status, reply.note, reply.storyGid, reply.status, String(task.id), orgId);
+  }
 }
 
 export function deleteCampaign(id: string, orgId = DEFAULT_ORG_ID) {

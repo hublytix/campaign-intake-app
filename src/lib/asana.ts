@@ -220,6 +220,39 @@ export class AsanaClient {
     return result.data ?? [];
   }
 
+  async addTaskComment(taskGid: string, htmlText: string): Promise<{ gid: string }> {
+    const result = await this.request<{ data: { gid: string } }>(
+      `/tasks/${encodeURIComponent(taskGid)}/stories`,
+      {
+        method: "POST",
+        body: JSON.stringify({ data: { html_text: htmlText } }),
+      },
+    );
+    return result.data;
+  }
+
+  async listTaskComments(
+    taskGid: string,
+  ): Promise<Array<{ gid: string; text: string; createdAt: string; isComment: boolean }>> {
+    const result = await this.request<{
+      data: Array<{
+        gid: string;
+        text?: string;
+        created_at?: string;
+        type?: string;
+        resource_subtype?: string;
+      }>;
+    }>(
+      `/tasks/${encodeURIComponent(taskGid)}/stories?opt_fields=text,created_at,type,resource_subtype`,
+    );
+    return (result.data ?? []).map((story) => ({
+      gid: story.gid,
+      text: story.text ?? "",
+      createdAt: story.created_at ?? "",
+      isComment: story.resource_subtype === "comment_added" || story.type === "comment",
+    }));
+  }
+
   async updateTask(
     taskGid: string,
     patch: { completed?: boolean; due_on?: string; assignee?: string },

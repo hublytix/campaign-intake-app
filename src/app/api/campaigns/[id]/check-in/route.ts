@@ -21,7 +21,7 @@ export async function POST(
     }>(request);
     if (!body.taskId) return errorJson("A task is required.", 400);
     if (body.action === "send") {
-      return json({ campaign: sendCheckIn({ campaignId: id, taskId: body.taskId, orgId: session.orgId }) });
+      return json(await sendCheckIn({ campaignId: id, taskId: body.taskId, orgId: session.orgId }));
     }
     if (!body.status) return errorJson("A check-in status is required.", 400);
     return json({

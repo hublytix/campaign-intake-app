@@ -38,7 +38,8 @@ Open [http://localhost:3000](http://localhost:3000). The app stores data in `dat
 1. Sign in to Asana and open [the developer console](https://app.asana.com/0/my-apps).
 2. Create a new app. Do not set distribution to “Any workspace” and do not submit it for review.
 3. Add the redirect URL `http://localhost:3000/api/asana/oauth/callback` (or your `APP_BASE_URL` plus that path).
-4. Enable only these scopes: `openid`, `email`, `profile`, `workspaces:read`, `teams:read`, `users:read`, `project_templates:read`, `projects:read`, `projects:write`, `tasks:read`, `tasks:write`.
+4. Enable only these scopes: `openid`, `email`, `profile`, `workspaces:read`, `teams:read`, `users:read`, `project_templates:read`, `projects:read`, `projects:write`, `tasks:read`, `tasks:write`, `stories:read`, `stories:write`.
+   If you connected Asana before the two `stories` scopes were added, disconnect and reconnect so the new scopes are granted.
 5. Copy the client ID and secret into `.env.local`, set the two 32-byte keys, and set `ASANA_ALLOWED_WORKSPACE_GID` to your test workspace GID.
 
 The callback uses a one-time `state` cookie and PKCE (`S256`). Tokens are encrypted at rest with `TOKEN_ENCRYPTION_KEY` and are never returned to the browser.
@@ -48,7 +49,8 @@ The callback uses a one-time `state` cookie and PKCE (`S256`). Tokens are encryp
 - Configurable form fields, naming and UTM patterns, generic Event / Content asset / Growth play starters, and in-app approval rules
 - Drafts, submit, approve or reject (a comment is required to reject)
 - After confirmation, creates an Asana project and starter tasks with dates counted back from the launch date
-- Dashboard status, in-app check-ins, and status refresh
+- Dashboard status and status refresh
+- Check-ins: in real mode, "Send check-in" posts a comment on the Asana task that @-mentions its owner. The owner replies on the task starting with `done`, `delayed` or `blocked` (plus an optional note), and "Refresh status" reads the reply back. Replies can also be recorded by hand in the app. In demo mode nothing is sent.
 - Disconnect Asana (revoke and delete stored tokens) and delete all local workspace data
 
 ## What it does not do

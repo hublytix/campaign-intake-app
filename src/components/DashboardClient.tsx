@@ -123,7 +123,11 @@ export function DashboardClient() {
         await apiSend(`/api/campaigns/${campaign.id}/refresh`, "POST", {});
       }
       await reload();
-      setMessage("Status refreshed.");
+      setMessage(
+        mode === "real"
+          ? "Status and check-in replies refreshed from Asana."
+          : "Status refreshed.",
+      );
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Refresh failed.");
     }
@@ -276,7 +280,11 @@ export function DashboardClient() {
 
         <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
           <h2 className="font-semibold">Who&apos;s late</h2>
-          <p className="mt-1 text-xs text-gray-500">From in-app check-ins and overdue tasks</p>
+          <p className="mt-1 text-xs text-gray-500">
+            {mode === "real"
+              ? "Check-ins are posted as comments on the Asana task. Owners reply there with done, delayed or blocked; refresh to pull replies in."
+              : "From in-app check-ins and overdue tasks"}
+          </p>
           <div className="mt-4 space-y-3">
             {lateTasks.length === 0 ? (
               <p className="text-sm text-gray-500">Nothing is late right now.</p>
@@ -298,11 +306,18 @@ export function DashboardClient() {
                       type="button"
                       className="rounded-lg border border-gray-300 px-2 py-1 text-xs font-medium"
                       onClick={async () => {
-                        await apiSend(`/api/campaigns/${campaign.id}/check-in`, "POST", {
-                          taskId: task.id,
-                          action: "send",
-                        });
-                        await reload();
+                        setMessage(null);
+                        try {
+                          const result = await apiSend<{ message: string }>(
+                            `/api/campaigns/${campaign.id}/check-in`,
+                            "POST",
+                            { taskId: task.id, action: "send" },
+                          );
+                          setMessage(result.message);
+                          await reload();
+                        } catch (err) {
+                          setMessage(err instanceof Error ? err.message : "Check-in failed.");
+                        }
                       }}
                     >
                       Send check-in

@@ -75,6 +75,8 @@ CREATE TABLE IF NOT EXISTS campaign_tasks (
   check_in_status TEXT NOT NULL DEFAULT 'pending',
   check_in_note TEXT,
   check_in_sent_at TEXT,
+  check_in_story_gid TEXT,
+  check_in_reply_gid TEXT,
   FOREIGN KEY (campaign_id) REFERENCES campaigns(id),
   FOREIGN KEY (org_id) REFERENCES organizations(id)
 );
@@ -98,7 +100,18 @@ export function openDatabase(filePath: string): DatabaseSync {
   db.exec("PRAGMA journal_mode = WAL;");
   db.exec("PRAGMA foreign_keys = ON;");
   db.exec(SCHEMA);
+  migrate(db);
   return db;
+}
+
+/** Adds columns introduced after the first release to existing local databases. */
+function migrate(db: DatabaseSync) {
+  const columns = db.prepare("PRAGMA table_info(campaign_tasks)").all() as Array<{ name: string }>;
+  for (const name of ["check_in_story_gid", "check_in_reply_gid"]) {
+    if (!columns.some((column) => column.name === name)) {
+      db.exec(`ALTER TABLE campaign_tasks ADD COLUMN ${name} TEXT`);
+    }
+  }
 }
 
 export function getDb(): DatabaseSync {

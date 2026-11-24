@@ -90,4 +90,6 @@ export const ASANA_SCOPES = [
   "projects:write",
   "tasks:read",
   "tasks:write",
+  "stories:read",
+  "stories:write",
 ] as const;

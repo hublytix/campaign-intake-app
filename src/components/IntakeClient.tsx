@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { apiGet, apiSend } from "@/lib/api-client";
 import { resolveApprover } from "@/lib/approvals";
 import { applyNamePattern, applyUtmPattern } from "@/lib/naming";
+import { isFieldRequired } from "@/lib/validation";
 import type { OrgSettings } from "@/lib/defaults";
 import type { AppMode, CampaignType } from "@/lib/types";
 import { TYPE_BLURBS, TYPE_LABELS, tasksForLaunch } from "@/lib/templates";
@@ -144,6 +145,11 @@ export function IntakeClient() {
     return <p className="text-sm text-gray-500">{message || "Loading form…"}</p>;
   }
 
+  const optionalTag = (fieldId: string) =>
+    isFieldRequired(fieldId, bootstrap.settings.formFields) ? null : (
+      <span className="font-normal text-gray-500"> (optional)</span>
+    );
+
   const fieldError = (name: string) =>
     errors[name] ? (
       <p className="mt-1 text-xs text-red-700" role="alert">
@@ -224,7 +230,7 @@ export function IntakeClient() {
             {fieldError("launchDate")}
           </label>
           <label className="block text-sm font-medium">
-            Budget (USD)
+            Budget (USD){optionalTag("budgetUsd")}
             <input
               type="number"
               min={0}
@@ -238,17 +244,18 @@ export function IntakeClient() {
 
         {type === "event" ? (
           <label className="mt-4 block text-sm font-medium">
-            Venue and dates on site (optional)
+            Venue and dates on site{optionalTag("venue")}
             <input
               className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2"
               value={venue}
               onChange={(event) => setVenue(event.target.value)}
             />
+            {fieldError("venue")}
           </label>
         ) : null}
 
         <label className="mt-4 block text-sm font-medium">
-          Brief
+          Brief{optionalTag("brief")}
           <textarea
             className="mt-1 min-h-28 w-full rounded-lg border border-gray-300 px-3 py-2"
             value={brief}

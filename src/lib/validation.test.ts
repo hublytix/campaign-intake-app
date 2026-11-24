@@ -29,6 +29,45 @@ describe("validateCampaignInput", () => {
     }
   });
 
+  it("accepts an empty brief, budget or region when the admin made them optional", () => {
+    const fields = [
+      { id: "brief", required: false },
+      { id: "budgetUsd", required: false },
+      { id: "region", required: false },
+    ];
+    const result = validateCampaignInput({ ...valid, brief: "", budgetUsd: "", region: "" }, fields);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.budgetUsd).toBe(0);
+  });
+
+  it("rejects an empty budget when it is required", () => {
+    const result = validateCampaignInput({ ...valid, budgetUsd: "" });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.errors.budgetUsd).toBeTruthy();
+  });
+
+  it("requires the venue for events only when the admin made it required", () => {
+    const fields = [{ id: "venue", required: true }];
+    const event = validateCampaignInput({ ...valid, venue: "" }, fields);
+    expect(event.ok).toBe(false);
+    if (!event.ok) expect(event.errors.venue).toBeTruthy();
+    expect(validateCampaignInput({ ...valid, type: "content_asset", venue: "" }, fields).ok).toBe(true);
+    expect(validateCampaignInput({ ...valid, venue: "" }).ok).toBe(true);
+  });
+
+  it("keeps name, type and launch date required even if settings say optional", () => {
+    const fields = [
+      { id: "shortName", required: false },
+      { id: "type", required: false },
+      { id: "launchDate", required: false },
+    ];
+    for (const field of ["shortName", "type", "launchDate"] as const) {
+      const result = validateCampaignInput({ ...valid, [field]: "" }, fields);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.errors[field]).toBeTruthy();
+    }
+  });
+
   it("rejects an invalid launch date and a negative budget", () => {
     expect(validateCampaignInput({ ...valid, launchDate: "not-a-date" }).ok).toBe(false);
     const budget = validateCampaignInput({ ...valid, budgetUsd: -10 });

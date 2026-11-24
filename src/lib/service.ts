@@ -20,7 +20,7 @@ import type {
   TaskCheckInStatus,
   ValidatedCampaignInput,
 } from "./types";
-import { validateCampaignInput } from "./validation";
+import { LOCKED_REQUIRED_FIELDS, validateCampaignInput } from "./validation";
 
 export interface ConnectionPublic {
   connected: boolean;
@@ -47,6 +47,11 @@ export function getSettings(orgId = DEFAULT_ORG_ID): OrgSettings {
 export function saveSettings(patch: Partial<OrgSettings>, orgId = DEFAULT_ORG_ID): OrgSettings {
   ensureDefaultOrg();
   const next = { ...settingsRow(orgId), ...patch };
+  next.formFields = next.formFields.map((field) =>
+    (LOCKED_REQUIRED_FIELDS as readonly string[]).includes(field.id)
+      ? { ...field, required: true }
+      : field,
+  );
   getDb()
     .prepare(
       `INSERT INTO settings (org_id, payload_json, updated_at)
@@ -486,7 +491,10 @@ function updateDraftRow(input: {
 }
 
 export function saveDraft(raw: unknown, orgId = DEFAULT_ORG_ID) {
-  const parsed = validateCampaignInput(raw as Parameters<typeof validateCampaignInput>[0]);
+  const parsed = validateCampaignInput(
+    raw as Parameters<typeof validateCampaignInput>[0],
+    getSettings(orgId).formFields,
+  );
   if (!parsed.ok) {
     throw Object.assign(new Error("Please fix the highlighted fields."), {
       status: 400,

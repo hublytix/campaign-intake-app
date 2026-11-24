@@ -5,7 +5,11 @@ import { apiGet, apiSend } from "@/lib/api-client";
 import { applyNamePattern, applyUtmPattern } from "@/lib/naming";
 import type { OrgSettings } from "@/lib/defaults";
 import type { AppMode, CampaignType } from "@/lib/types";
+import { LOCKED_REQUIRED_FIELDS } from "@/lib/validation";
 import { ConfirmDialog } from "./ConfirmDialog";
+
+const isLockedField = (fieldId: string) =>
+  (LOCKED_REQUIRED_FIELDS as readonly string[]).includes(fieldId);
 
 interface Bootstrap {
   mode: AppMode;
@@ -198,6 +202,10 @@ export function SetupClient() {
           <p className="mt-1 text-sm text-gray-500">
             What requesters fill in. Fields can show only for some campaign types.
           </p>
+          <p className="mt-1 text-xs text-gray-500">
+            Campaign name, type and launch date are always required, because the campaign name,
+            Asana tasks and due dates are built from them.
+          </p>
           <div className="mt-4 overflow-x-auto">
             <table className="w-full min-w-[32rem] text-left text-sm">
               <thead className="text-xs uppercase tracking-wide text-gray-500">
@@ -219,7 +227,13 @@ export function SetupClient() {
                     <td className="py-3">
                       <input
                         type="checkbox"
-                        checked={field.required}
+                        checked={field.required || isLockedField(field.id)}
+                        disabled={isLockedField(field.id)}
+                        title={
+                          isLockedField(field.id)
+                            ? "Always required: the campaign name, Asana tasks and due dates depend on it."
+                            : undefined
+                        }
                         aria-label={`${field.label} required`}
                         onChange={(event) => {
                           const formFields = settings.formFields.map((item, i) =>
